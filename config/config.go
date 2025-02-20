@@ -46,6 +46,7 @@ import (
 // General config
 type General struct {
 	Inbound
+	HostOverrideDestination bool                    `json:"host-override-destination"`
 	Mode                    T.TunnelMode            `json:"mode"`
 	UnifiedDelay            bool                    `json:"unified-delay"`
 	LogLevel                log.LogLevel            `json:"log-level"`
@@ -396,6 +397,7 @@ type RawTLS struct {
 }
 
 type RawConfig struct {
+	HostOverrideDestination bool                    `yaml:"host-override-destination" json:"host-override-destination"`
 	Port                    int                     `yaml:"port" json:"port"`
 	SocksPort               int                     `yaml:"socks-port" json:"socks-port"`
 	RedirPort               int                     `yaml:"redir-port" json:"redir-port"`
@@ -479,6 +481,7 @@ func Parse(buf []byte) (*Config, error) {
 
 func DefaultRawConfig() *RawConfig {
 	return &RawConfig{
+		HostOverrideDestination: true,
 		AllowLan:          false,
 		BindAddress:       "*",
 		LanAllowedIPs:     []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0"), netip.MustParsePrefix("::/0")},
@@ -753,6 +756,7 @@ func temporaryUpdateGeneral(general *General) func()
 
 func parseGeneral(cfg *RawConfig) (*General, error) {
 	return &General{
+		HostOverrideDestination: cfg.HostOverrideDestination,
 		Inbound: Inbound{
 			Port:              cfg.Port,
 			SocksPort:         cfg.SocksPort,
