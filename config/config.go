@@ -67,6 +67,7 @@ type General struct {
 	ETagSupport             bool                    `json:"etag-support"`
 	KeepAliveIdle           int                     `json:"keep-alive-idle"`
 	KeepAliveInterval       int                     `json:"keep-alive-interval"`
+	KeepAliveCount          int                     `json:"keep-alive-count"`
 	DisableKeepAlive        bool                    `json:"disable-keep-alive"`
 	LgbmAutoUpdate          bool                    `json:"lgbm-auto-update"`
 	LgbmUpdateInterval      int                     `json:"lgbm-update-interval"`
@@ -442,6 +443,7 @@ type RawConfig struct {
 	ETagSupport             bool                    `yaml:"etag-support" json:"etag-support"`
 	KeepAliveIdle           int                     `yaml:"keep-alive-idle" json:"keep-alive-idle"`
 	KeepAliveInterval       int                     `yaml:"keep-alive-interval" json:"keep-alive-interval"`
+	KeepAliveCount          int                     `yaml:"keep-alive-count" json:"keep-alive-count"`
 	DisableKeepAlive        bool                    `yaml:"disable-keep-alive" json:"disable-keep-alive"`
 	LgbmAutoUpdate          bool                    `yaml:"lgbm-auto-update" json:"lgbm-auto-update"`
 	LgbmUpdateInterval      int                     `yaml:"lgbm-update-interval" json:"lgbm-update-interval"`
@@ -797,6 +799,7 @@ func parseGeneral(cfg *RawConfig) (*General, error) {
 		ETagSupport:             cfg.ETagSupport,
 		KeepAliveIdle:           cfg.KeepAliveIdle,
 		KeepAliveInterval:       cfg.KeepAliveInterval,
+		KeepAliveCount:          cfg.KeepAliveCount,
 		DisableKeepAlive:        cfg.DisableKeepAlive,
 		LgbmAutoUpdate:          cfg.LgbmAutoUpdate,
 		LgbmUpdateInterval:      cfg.LgbmUpdateInterval,
