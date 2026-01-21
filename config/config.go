@@ -167,6 +167,7 @@ type DNS struct {
 	CacheMaxSize          int
 	CacheMinTTL           uint32
 	CacheMaxTTL           uint32
+	CacheStaleTTL         uint32
 	CacheRoundRobin       bool
 	FakeIPRange           netip.Prefix
 	FakeIPPool            *fakeip.Pool
@@ -248,6 +249,7 @@ type RawDNS struct {
 	CacheMaxSize                 int                                 `yaml:"cache-max-size" json:"cache-max-size"`
 	CacheMinTTL                  uint32                              `yaml:"cache-min-ttl" json:"cache-min-ttl"`
 	CacheMaxTTL                  uint32                              `yaml:"cache-max-ttl" json:"cache-max-ttl"`
+	CacheStaleTTL                *uint32                             `yaml:"cache-stale-ttl" json:"cache-stale-ttl"`
 	CacheRoundRobin              bool                                `yaml:"cache-round-robin" json:"cache-round-robin"`
 	NameServerPolicy             *orderedmap.OrderedMap[string, any] `yaml:"nameserver-policy" json:"nameserver-policy"`
 	ProxyServerNameserver        []string                            `yaml:"proxy-server-nameserver" json:"proxy-server-nameserver"`
@@ -1428,6 +1430,12 @@ func parseDNS(rawCfg *RawConfig, ruleProviders map[string]P.RuleProvider) (*DNS,
 		CacheMaxTTL:    cfg.CacheMaxTTL,
 		CacheRoundRobin: cfg.CacheRoundRobin,
 	}
+	if cfg.CacheStaleTTL == nil {
+		dnsCfg.CacheStaleTTL = ^uint32(0)
+	} else {
+		dnsCfg.CacheStaleTTL = *cfg.CacheStaleTTL
+	}
+
 	var err error
 	if dnsCfg.NameServer, err = parseNameServer(cfg.NameServer, cfg.RespectRules, cfg.PreferH3); err != nil {
 		return nil, err
