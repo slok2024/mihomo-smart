@@ -39,7 +39,7 @@ const (
 	cleanupInterval          = 120 * time.Minute
 	cacheParamAdjustInterval = 5 * time.Minute
 	recoveryCheckInterval    = 5 * time.Minute
-	hostStatusCheckInterval  = 30 * time.Second
+	hostStatusCheckInterval  = 30 * time.Minute
 	checkInterval            = 10 * time.Minute
 	flushQueueInterval       = 5 * time.Minute
 	rankingInterval          = 5 * time.Minute
@@ -288,6 +288,10 @@ func (s *Smart) DialContext(ctx context.Context, metadata *C.Metadata) (C.Conn, 
 				s.store.StoreUnwrapResult(s.Name(), s.configName, metadata.SmartTarget, asnNumber, metadata.NetWork == C.UDP, []C.Proxy{p})
 				return s.WrapConnWithMetric(c, p, metadata, connectTime), nil
 			}
+		}
+
+		if len(proxies) == 1 {
+			s.store.DeleteUnwrapResult(s.Name(), s.configName, metadata.SmartTarget, asnNumber, metadata.NetWork == C.UDP)
 		}
 
 		return nil, finalErr
@@ -668,12 +672,9 @@ func (s *Smart) InitSmart() {
 	s.startTimedTask(10*time.Minute, cleanupInterval, "Group old records clean up", func() {
 		s.store.CleanupOldRecords(s.Name(), s.configName)
 	}, false)
-	s.startTimedTask(5*time.Second, checkInterval, "Init LGBM Collector", func() {
-		// load after tunnel.Running because size option ready later than group init
-		if s.collectData {
-			s.dataCollector = lightgbm.GetCollector()
-		}
-	}, true)
+	if s.collectData {
+		s.dataCollector = lightgbm.GetCollector()
+	}
 
 	if s.useLightGBM {
 		s.weightModel = lightgbm.GetModel()
@@ -1375,12 +1376,15 @@ func (s *Smart) recordConnectionStats(status string, metadata *C.Metadata, proxy
 		metadata.NetWork.String(), asnInfo, metadata.NetWork == C.UDP)
 
 	// 针对具体 域名/IP 屏蔽节点
-	failedBlock := s.store.UpdateHostStatus(s.Name(), s.configName, wildcardTarget, proxy.Name(), s.maxFailedTimes, isDegraded, checked, blockCode)
+	failedBlock := s.store.UpdateHostStatus(s.Name(), s.configName, wildcardTarget, metadata.Host, proxy.Name(), s.maxFailedTimes, isDegraded, checked, blockCode)
 
 	// 平均权重(适应 target 调整为 rule based 和 asn based 的情况)
 	newWeight := updateAverageValueFloat(oldWeight, adjWeight)
 
 	if isDegraded || failedBlock {
+		if newWeight == 0 {
+			newWeight = smart.AllowedWeight * rand.Float64()
+		}
 		s.updatePrefetch(metadata, target, addressDisplay, proxy.Name(), newWeight, asnInfo, metadata.NetWork == C.UDP)
 		s.findSameConnection(metadata, proxy.Name(), target, asnInfo, metadata.NetWork == C.UDP)
 	}
@@ -1393,9 +1397,15 @@ func (s *Smart) recordConnectionStats(status string, metadata *C.Metadata, proxy
 
 	if s.collectData {
 		collectedWeight := adjWeight / priorityFactor
-		if (isDegraded || failedBlock) && collectedWeight >= smart.AllowedWeight {
-			// 对于异常连接强制调整为10%权重，便于模型训练时进行识别
-			collectedWeight = collectedWeight * 0.1
+		if isDegraded || failedBlock {
+			// 对于异常连接强制调整，便于模型训练时进行识别
+			if collectedWeight >= smart.AllowedWeight {
+				collectedWeight = collectedWeight * 0.1
+			} else {
+				if collectedWeight == 0 {
+					collectedWeight = smart.AllowedWeight * rand.Float64()
+				}
+			}
 		}
 		s.collectConnectionData(input, metadata, collectedWeight, proxy.Name(), ModelPredicted)
 	}
@@ -1458,7 +1468,7 @@ func (s *Smart) checkNodeQuality(
 	addressDisplay, proxyName string,
 	newWeight, oldWeight float64,
 	connectionDuration int64, uploadTotal, downloadTotal float64,
-	networkType string, asnInfo string, isUDP bool) (float64, bool, bool, int) {
+	networkType string, asnInfo string, isUDP bool) (float64, bool, bool, int64) {
 
 	if s.selected != "" {
 		return newWeight, false, false, 0
@@ -1594,15 +1604,15 @@ func (s *Smart) checkHostStatus() {
 		return
 	}
 
-	for host, nodes := range toCheck {
-		for _, nodeName := range nodes {
+	for wildcardTarget, nodeMap := range toCheck {
+		for nodeName, host := range nodeMap {
 			p, ok := proxyMap[nodeName]
 			if !ok {
 				continue
 			}
 			status, okRes, err := s.StatusTest(p, host)
 			if err == nil && okRes {
-				s.store.UpdateHostStatus(s.Name(), s.configName, host, nodeName, s.maxFailedTimes, false, true, 0)
+				s.store.UpdateHostStatus(s.Name(), s.configName, wildcardTarget, host, nodeName, s.maxFailedTimes, false, true, 0)
 				log.Debugln("[Smart] Recover Group: [%s] - Node: [%s] for Host: [%s] - Status: [%d]", s.Name(), nodeName, host, status)
 			}
 		}
