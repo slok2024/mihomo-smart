@@ -15,10 +15,10 @@ const (
 )
 
 var presetSceneParams = [4]SceneParams{
-	sceneWeb:         {0.5, 0.1, 0.4, 0.8, 0.6, 1.0, 0.2},
-	sceneInteractive: {0.6, 0.1, 0.3, 1.2, 1.0, 1.3, 0.3},
-	sceneStreaming:   {0.5, 0.2, 0.3, 1.5, 0.8, 1.2, 0.2},
-	sceneTransfer:    {0.5, 0.2, 0.3, 1.8, 0.7, 0.9, 0.1},
+	sceneWeb:         {0.5, 0.1, 0.4, 0.8, 0.6, 1.0, 0.3, 0.2},
+	sceneInteractive: {0.6, 0.1, 0.3, 1.2, 1.0, 1.3, 0.5, 0.3},
+	sceneStreaming:   {0.5, 0.2, 0.3, 1.5, 0.8, 1.2, 0.8, 0.2},
+	sceneTransfer:    {0.5, 0.2, 0.3, 1.8, 0.7, 0.9, 1.0, 0.1},
 }
 
 type (
@@ -29,46 +29,49 @@ type (
 		trafficWeight     float64
 		durationWeight    float64
 		qualityWeight     float64
+		lossWeight        float64
 		minDecayFactor    float64
 	}
 )
 
 type ModelInput struct {
 	// 节点历史性能指标
-	Success                    int64 // 成功次数
-	Failure                    int64 // 失败次数
-	ConnectTime                int64 // 连接时间(毫秒)
-	Latency                    int64 // 延迟(毫秒)
+	Success                    int64    // 成功次数
+	Failure                    int64    // 失败次数
+	ConnectTime                int64    // 连接时间(毫秒)
+	Latency                    int64    // 延迟(毫秒)
 
 	// 上传相关特征
-	UploadTotal                float64 // 上传流量(字节)
-	HistoryUploadTotal         float64 // 历史上传流量(字节)
-	MaxuploadRate              float64 // 最大上传速率(字节/秒)
-	HistoryMaxUploadRate       float64 // 历史最大上传速率(字节/秒)
+	UploadTotal                float64  // 上传流量(字节)
+	HistoryUploadTotal         float64  // 历史上传流量(字节)
+	MaxuploadRate              float64  // 最大上传速率(字节/秒)
+	HistoryMaxUploadRate       float64  // 历史最大上传速率(字节/秒)
 
 	// 下载相关特征
-	DownloadTotal              float64 // 下载流量(字节)
-	HistoryDownloadTotal       float64 // 历史下载流量(字节)
-	MaxdownloadRate            float64 // 最大下载速率(字节/秒)
-	HistoryMaxDownloadRate     float64 // 历史最大下载速率(字节/秒)
+	DownloadTotal              float64  // 下载流量(字节)
+	HistoryDownloadTotal       float64  // 历史下载流量(字节)
+	MaxdownloadRate            float64  // 最大下载速率(字节/秒)
+	HistoryMaxDownloadRate     float64  // 历史最大下载速率(字节/秒)
 
-	ConnectionDuration         float64 // 连接持续时间(分钟)
-	HistoryConnectionDuration  float64 // 历史平均连接持续时间(分钟)
-	LastUsed                   int64   // 上次使用时间
+	ConnectionDuration         float64  // 连接持续时间(分钟)
+	HistoryConnectionDuration  float64  // 历史平均连接持续时间(分钟)
+	LastUsed                   int64    // 上次使用时间
 
 	// 连接特征
-	IsUDP                      bool // 是否UDP连接
-	IsTCP                      bool // 是否TCP连接
+	IsUDP                      bool      // 是否UDP连接
+	IsTCP                      bool      // 是否TCP连接
+	LossRate                   float64   // 单次连接丢包率 0.0~1.0, 0=无丢包/不支持/UDP
+	CumulLossRate              float64   // 历史累计丢包率 cumulRetrans/cumulSent
 
 	// 元数据特征
-	DestIPASN                  string   // 目标IP的ASN信息
-	Host                       string   // 域名信息
-	DestIP                     string   // 目标IP地址
-	DestPort                   uint16   // 目标端口
-	DestGeoIP                  []string // 目标IP的地理位置信息
+	DestIPASN                  string    // 目标IP的ASN信息
+	Host                       string    // 域名信息
+	DestIP                     string    // 目标IP地址
+	DestPort                   uint16    // 目标端口
+	DestGeoIP                  []string  // 目标IP的地理位置信息
 
-	GroupName                  string // 策略组名称
-	NodeName                   string // 节点名称
+	GroupName                  string    // 策略组名称
+	NodeName                   string    // 节点名称
 }
 
 // 计算权重
@@ -205,10 +208,36 @@ func CalculateWeight(input *ModelInput, priorityFactor float64) (float64, bool) 
 
 	qualityBonus = math.Min(0.3, qualityBonus)
 
+	// 13. 丢包率衰减
+	// currentPenalty: 单次连接丢包，敏感但易波动
+	// cumulPenalty:   历史累计丢包，稳定但反应慢
+	// trustCumul:     累计丢包越高，越信任历史信号
+	lossFactor := 0.0
+	if input.LossRate > 0 || input.CumulLossRate > 0 {
+		currentPenalty := 0.0
+		if input.LossRate > 0 {
+			currentPenalty = 1.0 - math.Exp(-input.LossRate*10.0)
+		}
+
+		cumulPenalty := 0.0
+		if input.CumulLossRate > 0 {
+			cumulPenalty = 1.0 - math.Exp(-input.CumulLossRate*50.0)
+		}
+
+		// trustCumul ∈ [0,1]: 累计丢包率越高，越采纳历史判断
+		trustCumul := math.Min(1.0, cumulPenalty*5.0)
+
+		// 累计可信 → max(当前,累计) 确认性处罚
+		// 累计不可信 → 当前×0.3 疑似瞬态波动，减轻
+		lossFactor = trustCumul*math.Max(currentPenalty, cumulPenalty) +
+			(1.0-trustCumul)*currentPenalty*0.3
+	}
+
 	return baseWeight * (1 +
 		trafficFactor*params.trafficWeight +
 		durationFactor*params.durationWeight +
-		qualityBonus*params.qualityWeight) * priorityFactor, false
+		qualityBonus*params.qualityWeight -
+		lossFactor*params.lossWeight) * priorityFactor, false
 }
 
 // 识别连接的使用场景类型
